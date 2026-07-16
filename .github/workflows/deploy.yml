@@ -47,6 +47,9 @@ jobs:
     needs: [test]
     outputs:
       image_uri: ${{ steps.set_image_uri.outputs.image_uri }}
+      registry: ${{ steps.login-ecr.outputs.registry }}
+      repo_name: ${{ steps.build.outputs.repo_name }}
+      tag: ${{ steps.build.outputs.tag }}
 
     steps:
       - name: Checkout
@@ -161,10 +164,25 @@ jobs:
             -backend-config="region=${{ secrets.AWS_REGION }}" \
             -backend-config="key=${{ secrets.PROJECT_NAME }}/terraform.tfstate"
 
+      - name: Reconstruct image URI
+        id: image
+        env:
+          REGISTRY: ${{ needs.build.outputs.registry }}
+          REPO_NAME: ${{ needs.build.outputs.repo_name }}
+          TAG: ${{ needs.build.outputs.tag }}
+          IMAGE_URI_PASSTHROUGH: ${{ needs.build.outputs.image_uri }}
+        run: |
+          if [ -n "${IMAGE_URI_PASSTHROUGH}" ]; then
+            IMAGE_URI="${IMAGE_URI_PASSTHROUGH}"
+          else
+            IMAGE_URI="${REGISTRY}/${REPO_NAME}:${TAG}"
+          fi
+          echo "image_uri=${IMAGE_URI}" >> "$GITHUB_OUTPUT"
+
       - name: Terraform Apply
         working-directory: terraform
         env:
-          IMAGE_URI: ${{ needs.build.outputs.image_uri }}
+          IMAGE_URI: ${{ steps.image.outputs.image_uri }}
         run: |
           terraform apply -auto-approve \
             -var="project_name=${{ secrets.PROJECT_NAME }}" \
