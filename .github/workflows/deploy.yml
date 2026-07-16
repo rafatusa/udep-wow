@@ -46,9 +46,9 @@ jobs:
     runs-on: ubuntu-latest
     needs: [test]
     outputs:
-      image_uri: ${{ steps.set_image_uri.outputs.image_uri }}
-      registry: ${{ steps.login-ecr.outputs.registry }}
-      repo_name: ${{ steps.build.outputs.repo_name }}
+      # Only the git SHA tag is safe to pass across jobs — it contains no
+      # account ID and is never masked by configure-aws-credentials.
+      # The full image URI is reconstructed in downstream jobs via ECR login.
       tag: ${{ steps.build.outputs.tag }}
 
     steps:
@@ -120,18 +120,6 @@ jobs:
         run: |
           docker push "${FULL_URI}"
 
-      - name: Set image URI output (unmasked repo:tag only for cross-job use)
-        id: set_image_uri
-        env:
-          REGISTRY: ${{ steps.login-ecr.outputs.registry }}
-          REPO_NAME: ${{ steps.build.outputs.repo_name }}
-          TAG: ${{ steps.build.outputs.tag }}
-          FULL_URI: ${{ steps.build.outputs.full_uri }}
-        run: |
-          # Pass the full URI. If the account ID is masked by AWS credentials action,
-          # reconstruct from the registry output (which is already known to this job).
-          echo "image_uri=${FULL_URI}" >> "$GITHUB_OUTPUT"
-
   # 
   # PROVISION (Terraform)
   # 
@@ -151,6 +139,24 @@ jobs:
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: ${{ secrets.AWS_REGION }}
 
+      - name: Log in to Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Reconstruct image URI
+        id: image
+        env:
+          REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+          PROJECT_NAME: ${{ secrets.PROJECT_NAME }}
+          TAG: ${{ needs.build.outputs.tag }}
+        run: |
+          # Reconstruct the full image URI locally in this job using a fresh
+          # ECR login (provides REGISTRY without relying on masked cross-job
+          # outputs) and the TAG which is the only output safe to pass across
+          # jobs (it contains no account ID and is never suppressed).
+          IMAGE_URI="${REGISTRY}/${PROJECT_NAME}-app:${TAG}"
+          echo "image_uri=${IMAGE_URI}" >> "$GITHUB_OUTPUT"
+
       - name: Set up Terraform
         uses: hashicorp/setup-terraform@v3
         with:
@@ -163,21 +169,6 @@ jobs:
             -backend-config="bucket=${{ secrets.TF_STATE_BUCKET }}" \
             -backend-config="region=${{ secrets.AWS_REGION }}" \
             -backend-config="key=${{ secrets.PROJECT_NAME }}/terraform.tfstate"
-
-      - name: Reconstruct image URI
-        id: image
-        env:
-          REGISTRY: ${{ needs.build.outputs.registry }}
-          REPO_NAME: ${{ needs.build.outputs.repo_name }}
-          TAG: ${{ needs.build.outputs.tag }}
-          IMAGE_URI_PASSTHROUGH: ${{ needs.build.outputs.image_uri }}
-        run: |
-          if [ -n "${IMAGE_URI_PASSTHROUGH}" ]; then
-            IMAGE_URI="${IMAGE_URI_PASSTHROUGH}"
-          else
-            IMAGE_URI="${REGISTRY}/${REPO_NAME}:${TAG}"
-          fi
-          echo "image_uri=${IMAGE_URI}" >> "$GITHUB_OUTPUT"
 
       - name: Terraform Apply
         working-directory: terraform
