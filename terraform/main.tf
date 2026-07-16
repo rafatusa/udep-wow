@@ -429,7 +429,7 @@ resource "aws_iam_role_policy" "ecs_task_logs" {
 # ECS Cluster
 # 
 resource "aws_ecs_cluster" "main" {
-  name = "node-app-cluster"
+  name = "${var.project_name}-cluster"
 
   setting {
     name  = "containerInsights"
@@ -566,14 +566,14 @@ resource "aws_lb_listener" "http" {
 # ECS Service
 # 
 resource "aws_ecs_service" "app" {
-  name                               = "${var.project_name}-service"
-  cluster                            = aws_ecs_cluster.main.id
-  task_definition                    = aws_ecs_task_definition.app.arn
-  desired_count                      = 2
-  launch_type                        = "FARGATE"
-  platform_version                   = "LATEST"
-  health_check_grace_period_seconds  = 60
-  force_new_deployment               = true
+  name                              = "${var.project_name}-service"
+  cluster                           = aws_ecs_cluster.main.id
+  task_definition                   = aws_ecs_task_definition.app.arn
+  desired_count                     = 2
+  launch_type                       = "FARGATE"
+  platform_version                  = "LATEST"
+  health_check_grace_period_seconds = 120
+  force_new_deployment              = true
 
   network_configuration {
     subnets          = [aws_subnet.private_a.id, aws_subnet.private_b.id]
